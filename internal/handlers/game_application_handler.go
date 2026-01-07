@@ -5,8 +5,10 @@ import (
 
 	"github.com/duker221/teamly/internal/database"
 	"github.com/duker221/teamly/internal/models"
+	"github.com/duker221/teamly/internal/utils"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 type CreateGameApplicationRequest struct {
@@ -19,6 +21,14 @@ type CreateGameApplicationRequest struct {
 	PrimeTimeEnd    time.Time `json:"prime_time_end"`
 	WithVoiceChat   bool      `json:"with_voice_chat"`
 	Platform        string    `json:"platform"`
+}
+
+// ApplicationWithUserResponse - заявка с информацией об отклике пользователя
+type ApplicationWithUserResponse struct {
+	models.GameApplication
+	UserHasResponded   bool          `json:"user_has_responded"`
+	UserResponseStatus *models.Status `json:"user_response_status,omitempty"`
+	UserResponseMessage *string       `json:"user_response_message,omitempty"`
 }
 
 // CreateGameApplication создает новую заявку на игру
@@ -151,8 +161,51 @@ func GetUserApplications(c *fiber.Ctx) error {
 	})
 }
 
+// GetApplicationsByUserID получает активные заявки конкретного пользователя (публичный endpoint)
+func GetApplicationsByUserID(c *fiber.Ctx) error {
+	userIDParam := c.Params("id")
+	if userIDParam == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "User ID is required",
+		})
+	}
+
+	parsedUserID, err := uuid.Parse(userIDParam)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid user ID format",
+		})
+	}
+
+	var applications []models.GameApplication
+	result := database.DB.
+		Preload("Game").
+		Preload("User").
+		Where("user_id = ? AND is_active = ?", parsedUserID, true).
+		Order("created_at DESC").
+		Find(&applications)
+
+	if result.Error != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to fetch applications",
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"applications": applications,
+		"count":        len(applications),
+	})
+}
+
 // GetAllApplications получает все активные заявки
 func GetAllApplications(c *fiber.Ctx) error {
+	// Пытаемся получить userID напрямую из токена (без middleware)
+	var currentUserID *uuid.UUID
+	userID, err := utils.GetUserIDFromContext(c)
+	if err == nil {
+		currentUserID = &userID
+	}
+
 	var applications []models.GameApplication
 
 	query := database.DB.
@@ -186,6 +239,58 @@ func GetAllApplications(c *fiber.Ctx) error {
 		})
 	}
 
+	// Если пользователь авторизован, добавляем информацию об откликах
+	var applicationsWithResponse []ApplicationWithUserResponse
+	if currentUserID != nil {
+		// Получаем все отклики текущего пользователя для этих заявок
+		applicationIDs := make([]uuid.UUID, len(applications))
+		for i, app := range applications {
+			applicationIDs[i] = app.ID
+		}
+
+		var responses []models.ApplicationResponse
+		database.DB.
+			Preload("Conversation.Messages", func(db *gorm.DB) *gorm.DB {
+				return db.Order("created_at ASC").Limit(1) // Только первое сообщение
+			}).
+			Where("user_id = ? AND application_id IN ?", currentUserID, applicationIDs).
+			Find(&responses)
+
+		// Создаем map для быстрого поиска
+		responseMap := make(map[uuid.UUID]*models.ApplicationResponse)
+		for i := range responses {
+			responseMap[responses[i].ApplicationID] = &responses[i]
+		}
+
+		// Формируем ответ с информацией об откликах
+		for _, app := range applications {
+			appWithResponse := ApplicationWithUserResponse{
+				GameApplication:     app,
+				UserHasResponded:    false,
+				UserResponseStatus:  nil,
+				UserResponseMessage: nil,
+			}
+
+			if response, exists := responseMap[app.ID]; exists {
+				appWithResponse.UserHasResponded = true
+				appWithResponse.UserResponseStatus = &response.Status
+
+				// Добавляем первое сообщение если есть
+				if response.Conversation != nil && len(response.Conversation.Messages) > 0 {
+					appWithResponse.UserResponseMessage = &response.Conversation.Messages[0].Content
+				}
+			}
+
+			applicationsWithResponse = append(applicationsWithResponse, appWithResponse)
+		}
+
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{
+			"applications": applicationsWithResponse,
+			"count":        len(applicationsWithResponse),
+		})
+	}
+
+	// Если не авторизован, возвращаем без информации об откликах
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"applications": applications,
 		"count":        len(applications),

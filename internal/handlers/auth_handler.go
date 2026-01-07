@@ -55,20 +55,10 @@ func RegisterUser(c *fiber.Ctx) error {
 		})
 	}
 
-	// Set httpOnly cookie for security
-	c.Cookie(&fiber.Cookie{
-		Name:     "auth_token",
-		Value:    token,
-		Path:     "/",
-		MaxAge:   604800, // 7 days in seconds
-		HTTPOnly: true,
-		Secure:   false, // Set to true in production with HTTPS
-		SameSite: "Lax",
-	})
-
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 		"message": "User created successfully",
 		"user":    user,
+		"token":   token,
 	})
 }
 
@@ -92,13 +82,13 @@ func LoginUser(c *fiber.Ctx) error {
 
 	if user.ID == uuid.Nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"error": "User not found",
+			"error": "Email not found",
 		})
 	}
 
 	if !utils.ComparePassword(user.PasswordHash, req.Password) {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"error": "Invalid password",
+			"error": "Incorrect password",
 		})
 	}
 
@@ -109,37 +99,17 @@ func LoginUser(c *fiber.Ctx) error {
 		})
 	}
 
-	// Set httpOnly cookie for security
-	c.Cookie(&fiber.Cookie{
-		Name:     "auth_token",
-		Value:    token,
-		Path:     "/",
-		MaxAge:   604800, // 7 days in seconds
-		HTTPOnly: true,
-		Secure:   false, // Set to true in production with HTTPS
-		SameSite: "Lax",
-	})
-
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"message": "Login successful",
 		"user":    user,
+		"token":   token,
 	})
 }
 
 func GetMe(c *fiber.Ctx) error {
-	// Debug: log cookies
-	token := c.Cookies("auth_token")
-	if token == "" {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"error":   "Unauthorized",
-			"details": "No auth_token cookie found",
-		})
-	}
-
-	// Получаем user ID из cookie
+	// Получаем user ID из cookie или Authorization header
 	userID, err := utils.GetUserIDFromContext(c)
 	if err != nil {
-		// Логируем ошибку для отладки
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"error":   "Unauthorized",
 			"details": err.Error(),
@@ -185,8 +155,18 @@ func GetUserByID(c *fiber.Ctx) error {
 		})
 	}
 
+	// Получаем активные заявки пользователя
+	var applications []models.GameApplication
+	database.DB.
+		Preload("Game").
+		Preload("User").
+		Where("user_id = ? AND is_active = ?", parsedID, true).
+		Order("created_at DESC").
+		Find(&applications)
+
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"user": user,
+		"user":         user,
+		"applications": applications,
 	})
 }
 
@@ -207,11 +187,11 @@ func GetAllUsers(c *fiber.Ctx) error {
 }
 
 func LogoutUser(c *fiber.Ctx) error {
-	// Clear the auth cookie by setting MaxAge to -1
 	c.Cookie(&fiber.Cookie{
 		Name:     "auth_token",
 		Value:    "",
 		Path:     "/",
+		Domain:   "localhost",
 		MaxAge:   -1,
 		HTTPOnly: true,
 		Secure:   false,

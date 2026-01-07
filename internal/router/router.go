@@ -21,6 +21,7 @@ func SetupRoutes(app *fiber.App) {
 	users := api.Group("/users")
 	users.Get("/", handlers.GetAllUsers)
 	users.Get("/:id", handlers.GetUserByID)
+	users.Get("/:id/applications", handlers.GetApplicationsByUserID)
 	users.Patch("/:id", handlers.UpdateProfile)
 
 	//countries
@@ -41,4 +42,13 @@ func SetupRoutes(app *fiber.App) {
 	applications.Post("/", middleware.AuthRequired, handlers.CreateGameApplication)
 	applications.Patch("/:id", middleware.AuthRequired, handlers.UpdateApplication)
 	applications.Delete("/:id", middleware.AuthRequired, handlers.DeleteApplication)
+
+	// Application responses (отклики)
+	applications.Post("/:id/responses", middleware.AuthRequired, handlers.CreateApplicationResponse)
+	applications.Get("/:id/responses", middleware.AuthRequired, handlers.GetApplicationResponses)
+
+	//responses
+	responses := api.Group("/responses")
+	responses.Get("/my", middleware.AuthRequired, handlers.GetMyResponses)
+	responses.Patch("/:id", middleware.AuthRequired, handlers.UpdateResponseStatus)
 }

@@ -55,17 +55,18 @@ type ApplicationResponse struct {
 	ID            uuid.UUID        `gorm:"primaryKey" json:"id"`
 	ApplicationID uuid.UUID        `gorm:"not null;index" json:"application_id"`
 	Application   *GameApplication `gorm:"foreignKey:ApplicationID" json:"application,omitempty"`
-	UserID        uuid.UUID        `gorm:"not null;index" json:"user_id"`
+	UserID        uuid.UUID        `gorm:"not null;index" json:"user_id"` // Кто откликнулся
 	User          *User            `gorm:"foreignKey:UserID" json:"user,omitempty"`
 
-	Message *string `gorm:"type:text" json:"message,omitempty"`
-	Status  Status  `gorm:"default:'pending'" json:"status"`
+	Status        Status           `gorm:"default:'pending';index" json:"status"`
 
-	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+	CreatedAt     time.Time        `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt     time.Time        `gorm:"autoUpdateTime" json:"updated_at"`
+
+	// Связь 1:1 с Conversation
+	Conversation  *Conversation    `gorm:"foreignKey:ResponseID" json:"conversation,omitempty"`
 }
 
-// BeforeCreate hook для автоматической генерации UUID
 func (ga *GameApplication) BeforeCreate(tx *gorm.DB) error {
 	if ga.ID == uuid.Nil {
 		ga.ID = uuid.New()
@@ -76,7 +77,6 @@ func (ga *GameApplication) BeforeCreate(tx *gorm.DB) error {
 	return nil
 }
 
-// BeforeCreate hook для ApplicationResponse
 func (ar *ApplicationResponse) BeforeCreate(tx *gorm.DB) error {
 	if ar.ID == uuid.Nil {
 		ar.ID = uuid.New()

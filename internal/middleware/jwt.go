@@ -21,8 +21,6 @@ func JWTProtected(c *fiber.Ctx) error {
 	})(c)
 }
 
-// AuthRequired middleware извлекает userID из токена (cookie или Authorization header)
-// и устанавливает его в context для использования в handlers
 func AuthRequired(c *fiber.Ctx) error {
 	userID, err := utils.GetUserIDFromContext(c)
 	if err != nil {
@@ -31,7 +29,6 @@ func AuthRequired(c *fiber.Ctx) error {
 		})
 	}
 
-	// Сохраняем userID в context для использования в handlers
 	c.Locals("userID", userID.String())
 	return c.Next()
 }

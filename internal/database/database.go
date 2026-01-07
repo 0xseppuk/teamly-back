@@ -23,7 +23,6 @@ func InitDB() {
 
 	config.LoadDbConfig()
 
-	// DEBUG: Выводим загруженный конфиг
 	log.Printf("DB Config: host=%s port=%s user=%s dbname=%s",
 		config.DbConfig.Host, config.DbConfig.Port, config.DbConfig.User, config.DbConfig.DBName)
 
@@ -31,13 +30,12 @@ func InitDB() {
 		config.DbConfig.Host, config.DbConfig.Port, config.DbConfig.User, config.DbConfig.Password, config.DbConfig.DBName)
 
 	DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Info), // Логирование SQL запросов
+		Logger: logger.Default.LogMode(logger.Info),
 	})
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
 
-	// Проверка подключения
 	sqlDB, err := DB.DB()
 	if err != nil {
 		log.Fatalf("Failed to get database instance: %v", err)
@@ -50,7 +48,6 @@ func InitDB() {
 
 	log.Println("Connected to database with GORM")
 
-	// Auto Migration - создание таблиц
 	if err := AutoMigrate(); err != nil {
 		log.Fatalf("Failed to run migrations: %v", err)
 	}
@@ -66,6 +63,8 @@ func AutoMigrate() error {
 		&models.Game{},
 		&models.GameApplication{},
 		&models.ApplicationResponse{},
+		&models.Conversation{},
+		&models.Message{},
 		// &models.Listing{},
 		// &models.ListingGame{},
 		// &models.Review{},
