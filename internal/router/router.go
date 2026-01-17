@@ -43,7 +43,7 @@ func SetupRoutes(app *fiber.App) {
 	applications.Patch("/:id", middleware.AuthRequired, handlers.UpdateApplication)
 	applications.Delete("/:id", middleware.AuthRequired, handlers.DeleteApplication)
 
-	// Application responses (отклики)
+	// Application responses
 	applications.Post("/:id/responses", middleware.AuthRequired, handlers.CreateApplicationResponse)
 	applications.Get("/:id/responses", middleware.AuthRequired, handlers.GetApplicationResponses)
 
@@ -51,4 +51,12 @@ func SetupRoutes(app *fiber.App) {
 	responses := api.Group("/responses")
 	responses.Get("/my", middleware.AuthRequired, handlers.GetMyResponses)
 	responses.Patch("/:id", middleware.AuthRequired, handlers.UpdateResponseStatus)
+
+	// Conversations & Messages
+	conversations := api.Group("/conversations", middleware.AuthRequired)
+	conversations.Get("/", handlers.GetUserConversations)                // List all user's conversations
+	conversations.Get("/unread-count", handlers.GetUnreadCount)          // Get total unread count
+	conversations.Get("/:id", handlers.GetConversationByID)              // Get specific conversation
+	conversations.Get("/:id/messages", handlers.GetConversationMessages) // Get messages with pagination
+	conversations.Patch("/:id/read", handlers.MarkMessagesAsRead)        // Mark all messages as read
 }

@@ -106,20 +106,46 @@ func CreateApplicationResponse(c *fiber.Ctx) error {
 		})
 	}
 
-	// 2. Создаем диалог
+	// 2. Найти или создать диалог между двумя пользователями
+	var conversation models.Conversation
 	now := time.Now()
-	conversation := models.Conversation{
-		ResponseID:     response.ID,
-		Participant1ID: application.UserId, // Автор заявки
-		Participant2ID: userID,             // Откликнувшийся
-		LastMessageAt:  &now,
-		IsArchived:     false,
-	}
-	if err := tx.Create(&conversation).Error; err != nil {
+
+	// Проверяем существует ли уже conversation между этими пользователями
+	err = tx.Where(
+		"(participant1_id = ? AND participant2_id = ?) OR (participant1_id = ? AND participant2_id = ?)",
+		application.UserId, userID, userID, application.UserId,
+	).First(&conversation).Error
+
+	if err == gorm.ErrRecordNotFound {
+		// Conversation не найден - создаем новый
+		conversation = models.Conversation{
+			ResponseID:     response.ID,
+			Participant1ID: application.UserId, // Автор заявки
+			Participant2ID: userID,             // Откликнувшийся
+			LastMessageAt:  &now,
+			IsArchived:     false,
+		}
+		if err := tx.Create(&conversation).Error; err != nil {
+			tx.Rollback()
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "Failed to create conversation",
+			})
+		}
+	} else if err != nil {
+		// Другая ошибка
 		tx.Rollback()
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to create conversation",
+			"error": "Failed to check conversation",
 		})
+	} else {
+		// Conversation найден - обновляем last_message_at
+		conversation.LastMessageAt = &now
+		if err := tx.Save(&conversation).Error; err != nil {
+			tx.Rollback()
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "Failed to update conversation",
+			})
+		}
 	}
 
 	// 3. Создаем первое сообщение (сопроводительное письмо)
@@ -195,6 +221,7 @@ func GetApplicationResponses(c *fiber.Ctx) error {
 	var responses []models.ApplicationResponse
 	err = database.DB.
 		Preload("User").
+		Preload("Conversation", "is_archived = ? OR is_archived = ?", false, true). // Загружаем все диалоги
 		Preload("Conversation.Messages", func(db *gorm.DB) *gorm.DB {
 			return db.Order("created_at ASC").Limit(1) // Только первое сообщение
 		}).
@@ -276,22 +303,74 @@ func UpdateResponseStatus(c *fiber.Ctx) error {
 		})
 	}
 
-	// Обновляем статус
+	// Обновляем статус в транзакции
+	tx := database.DB.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Обновляем статус отклика
 	response.Status = newStatus
-	if err := database.DB.Save(&response).Error; err != nil {
+	if err := tx.Save(&response).Error; err != nil {
+		tx.Rollback()
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to update response status",
 		})
 	}
 
+	// Если приняли - увеличиваем счетчик игроков
+	if newStatus == models.StatusAccepted {
+		var application models.GameApplication
+		if err := tx.First(&application, response.Application.ID).Error; err != nil {
+			tx.Rollback()
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "Failed to fetch application",
+			})
+		}
+
+		// Увеличиваем счетчик
+		application.AcceptedPlayers++
+
+		// Проверяем заполненность
+		if application.AcceptedPlayers >= application.MaxPlayers {
+			application.IsFull = true
+		}
+
+		if err := tx.Save(&application).Error; err != nil {
+			tx.Rollback()
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "Failed to update application",
+			})
+		}
+	}
+
 	// Если отклонили - архивируем диалог
 	if newStatus == models.StatusRejected {
 		var conversation models.Conversation
-		if err := database.DB.Where("response_id = ?", respUUID).First(&conversation).Error; err == nil {
+		if err := tx.Where("response_id = ?", respUUID).First(&conversation).Error; err == nil {
 			conversation.IsArchived = true
-			database.DB.Save(&conversation)
+			tx.Save(&conversation)
 		}
 	}
+
+	// Коммитим транзакцию
+	if err := tx.Commit().Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to commit transaction",
+		})
+	}
+
+	// Загружаем связанные данные перед возвратом
+	database.DB.
+		Preload("Application").
+		Preload("Application.Game").
+		Preload("User").
+		Preload("Conversation.Messages", func(db *gorm.DB) *gorm.DB {
+			return db.Order("created_at ASC").Limit(1)
+		}).
+		First(&response, response.ID)
 
 	return c.JSON(response)
 }
@@ -317,6 +396,7 @@ func GetMyResponses(c *fiber.Ctx) error {
 	err = database.DB.
 		Preload("Application").
 		Preload("Application.Game").
+		Preload("Conversation", "is_archived = ? OR is_archived = ?", false, true). // Загружаем все диалоги
 		Preload("Conversation.Messages", func(db *gorm.DB) *gorm.DB {
 			return db.Order("created_at ASC").Limit(1)
 		}).

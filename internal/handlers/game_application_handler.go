@@ -26,9 +26,10 @@ type CreateGameApplicationRequest struct {
 // ApplicationWithUserResponse - заявка с информацией об отклике пользователя
 type ApplicationWithUserResponse struct {
 	models.GameApplication
-	UserHasResponded   bool          `json:"user_has_responded"`
-	UserResponseStatus *models.Status `json:"user_response_status,omitempty"`
-	UserResponseMessage *string       `json:"user_response_message,omitempty"`
+	UserHasResponded      bool           `json:"user_has_responded"`
+	UserResponseStatus    *models.Status `json:"user_response_status,omitempty"`
+	UserResponseMessage   *string        `json:"user_response_message,omitempty"`
+	PendingResponsesCount int            `json:"pending_responses_count,omitempty"`
 }
 
 // CreateGameApplication создает новую заявку на игру
@@ -145,7 +146,7 @@ func GetUserApplications(c *fiber.Ctx) error {
 	result := database.DB.
 		Preload("Game").
 		Preload("User").
-		Where("user_id = ?", parsedUserID).
+		Where("user_id = ? AND is_active = ?", parsedUserID, true).
 		Order("created_at DESC").
 		Find(&applications)
 
@@ -155,9 +156,44 @@ func GetUserApplications(c *fiber.Ctx) error {
 		})
 	}
 
+	// Получаем количество pending откликов для каждой заявки
+	applicationIDs := make([]uuid.UUID, len(applications))
+	for i, app := range applications {
+		applicationIDs[i] = app.ID
+	}
+
+	// Считаем количество pending откликов
+	type ResponseCount struct {
+		ApplicationID uuid.UUID
+		Count         int64
+	}
+	var responseCounts []ResponseCount
+	database.DB.
+		Model(&models.ApplicationResponse{}).
+		Select("application_id, COUNT(*) as count").
+		Where("application_id IN ? AND status = ?", applicationIDs, models.StatusPending).
+		Group("application_id").
+		Scan(&responseCounts)
+
+	// Создаем map для быстрого поиска
+	countMap := make(map[uuid.UUID]int64)
+	for _, rc := range responseCounts {
+		countMap[rc.ApplicationID] = rc.Count
+	}
+
+	// Формируем ответ с количеством pending откликов
+	var applicationsWithCounts []ApplicationWithUserResponse
+	for _, app := range applications {
+		appWithCount := ApplicationWithUserResponse{
+			GameApplication:       app,
+			PendingResponsesCount: int(countMap[app.ID]),
+		}
+		applicationsWithCounts = append(applicationsWithCounts, appWithCount)
+	}
+
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"applications": applications,
-		"count":        len(applications),
+		"applications": applicationsWithCounts,
+		"count":        len(applicationsWithCounts),
 	})
 }
 
@@ -463,7 +499,10 @@ func DeleteApplication(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := database.DB.Delete(&application).Error; err != nil {
+	// Мягкое удаление - помечаем как неактивную
+	// История откликов и чатов сохраняется, но заявка исчезает из списка
+	application.IsActive = false
+	if err := database.DB.Save(&application).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to delete application",
 		})

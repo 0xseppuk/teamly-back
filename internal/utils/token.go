@@ -3,6 +3,7 @@ package utils
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -75,21 +76,20 @@ func GetUserIDFromToken(tokenString string) (uuid.UUID, error) {
 	return userID, nil
 }
 
-// GetUserIDFromContext извлекает user ID из cookie или Bearer токена в Fiber контексте
 func GetUserIDFromContext(c *fiber.Ctx) (uuid.UUID, error) {
-	// Сначала пробуем получить токен из cookie
-	tokenString := c.Cookies("auth_token")
-
-	// Если cookie нет, пробуем получить из Authorization header
-	if tokenString == "" {
-		authHeader := c.Get("Authorization")
-		if authHeader != "" && len(authHeader) > 7 && authHeader[:7] == "Bearer " {
-			tokenString = authHeader[7:]
-		}
+	authHeader := c.Get("Authorization")
+	if authHeader == "" {
+		return uuid.Nil, fmt.Errorf("authorization header is missing")
 	}
 
+	const bearerPrefix = "Bearer "
+	if !strings.HasPrefix(authHeader, bearerPrefix) {
+		return uuid.Nil, fmt.Errorf("invalid authorization header format")
+	}
+
+	tokenString := strings.TrimSpace(authHeader[len(bearerPrefix):])
 	if tokenString == "" {
-		return uuid.Nil, fmt.Errorf("auth token not found in cookie or authorization header")
+		return uuid.Nil, fmt.Errorf("bearer token is empty")
 	}
 
 	return GetUserIDFromToken(tokenString)
