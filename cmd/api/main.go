@@ -2,10 +2,10 @@ package main
 
 import (
 	"log"
-	"os"
 
 	"github.com/duker221/teamly/internal/database"
 	"github.com/duker221/teamly/internal/router"
+	"github.com/duker221/teamly/internal/services/email"
 	"github.com/duker221/teamly/internal/utils"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
@@ -25,6 +25,11 @@ func main() {
 	// Инициализация базы данных
 	database.InitDB()
 
+	// Инициализация email сервиса
+	if err := email.InitEmailService(); err != nil {
+		log.Printf("Warning: Email service initialization failed: %v", err)
+	}
+
 	// Создание Fiber приложения
 	webApp := fiber.New(fiber.Config{
 		ErrorHandler: func(c *fiber.Ctx, err error) error {
@@ -43,9 +48,9 @@ func main() {
 
 	// CORS configuration
 	webApp.Use(cors.New(cors.Config{
-		AllowOrigins:     getEnv("CORS_ORIGIN", "http://localhost:3000"),
+		AllowOrigins:     utils.GetEnv("CORS_ORIGIN", "http://localhost:3000"),
 		AllowCredentials: true,
-		AllowHeaders:     "Origin, Content-Type, Accept, Authorization",
+		AllowHeaders:     "Origin, Content-Type, Accept, Authorization, X-Recaptcha-Token",
 		AllowMethods:     "GET, POST, PUT, DELETE, OPTIONS, PATCH",
 	}))
 
@@ -60,16 +65,9 @@ func main() {
 	})
 
 	// Запуск сервера
-	port := getEnv("PORT", "3001")
+	port := utils.GetEnv("PORT", "3001")
 	log.Printf("Server starting on port %s", port)
 	if err := webApp.Listen(":" + port); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
-}
-
-func getEnv(key, fallback string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return fallback
 }

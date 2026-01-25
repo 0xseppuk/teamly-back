@@ -1,6 +1,7 @@
 package models
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -50,9 +51,64 @@ type Message struct {
 	UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 }
 
+type MessageJSON struct {
+	ID             uuid.UUID     `json:"id"`
+	ConversationID uuid.UUID     `json:"conversation_id"`
+	SenderID       uuid.UUID     `json:"sender_id"`
+	Content        string        `json:"content"`
+	IsRead         bool          `json:"is_read"`
+	ReadAt         *string       `json:"read_at,omitempty"`
+	CreatedAt      string        `json:"created_at"`
+	UpdatedAt      string        `json:"updated_at"`
+	Sender         *User         `json:"sender,omitempty"`
+	Conversation   *Conversation `json:"conversation,omitempty"`
+}
+
+func (m Message) MarshalJSON() ([]byte, error) {
+	formatTime := func(t time.Time) string {
+		if t.IsZero() {
+			// Если дата не установлена, используем текущее время
+			return time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+		}
+		return t.UTC().Format("2006-01-02T15:04:05.000Z")
+	}
+
+	msgJSON := MessageJSON{
+		ID:             m.ID,
+		ConversationID: m.ConversationID,
+		SenderID:       m.SenderID,
+		Content:        m.Content,
+		IsRead:         m.IsRead,
+		CreatedAt:      formatTime(m.CreatedAt),
+		UpdatedAt:      formatTime(m.UpdatedAt),
+		Sender:         m.Sender,
+		Conversation:   m.Conversation,
+	}
+
+	if m.ReadAt != nil {
+		readAtStr := formatTime(*m.ReadAt)
+		msgJSON.ReadAt = &readAtStr
+	}
+
+	return json.Marshal(msgJSON)
+}
+
 func (m *Message) BeforeCreate(tx *gorm.DB) error {
 	if m.ID == uuid.Nil {
 		m.ID = uuid.New()
 	}
+	// Устанавливаем CreatedAt и UpdatedAt, если они не установлены
+	now := time.Now()
+	if m.CreatedAt.IsZero() {
+		m.CreatedAt = now
+	}
+	if m.UpdatedAt.IsZero() {
+		m.UpdatedAt = now
+	}
+	return nil
+}
+
+func (m *Message) BeforeUpdate(tx *gorm.DB) error {
+	m.UpdatedAt = time.Now()
 	return nil
 }

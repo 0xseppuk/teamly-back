@@ -9,7 +9,16 @@ import (
 
 func GetAllGames(c *fiber.Ctx) error {
 	var games []models.Game
-	result := database.DB.Find(&games)
+	search := c.Query("search")
+
+	query := database.DB
+
+	// Add search filter if provided
+	if search != "" {
+		query = query.Where("LOWER(name) LIKE LOWER(?)", "%"+search+"%")
+	}
+
+	result := query.Find(&games)
 
 	if result.Error != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{

@@ -9,13 +9,21 @@ import (
 func SetupRoutes(app *fiber.App) {
 	api := app.Group("/api")
 
+	// Общий rate limiter для всех API запросов (100 req/min)
+	api.Use(middleware.APIRateLimiter())
+
 	//auth
 	auth := api.Group("/auth")
-	auth.Post("/login", handlers.LoginUser)
-	auth.Post("/register", handlers.RegisterUser)
+	// Строгий лимит для логина и регистрации (5 req/min) - защита от брутфорса
+	auth.Post("/login", middleware.AuthRateLimiter(), middleware.RecaptchaMiddleware(), handlers.LoginUser)
+	auth.Post("/register", middleware.AuthRateLimiter(), middleware.RecaptchaMiddleware(), handlers.RegisterUser)
 	auth.Post("/logout", handlers.LogoutUser)
 	auth.Get("/me", handlers.GetMe)
+	auth.Get("/ws-token", handlers.GetWebSocketToken) // Токен для WebSocket
 	auth.Patch("/me", handlers.UpdateProfile)
+	// Password reset endpoints
+	auth.Post("/forgot-password", middleware.AuthRateLimiter(), middleware.RecaptchaMiddleware(), handlers.ForgotPassword)
+	auth.Post("/reset-password", middleware.AuthRateLimiter(), handlers.ResetPassword)
 
 	//users
 	users := api.Group("/users")
@@ -39,7 +47,7 @@ func SetupRoutes(app *fiber.App) {
 	applications.Get("/", handlers.GetAllApplications)
 	applications.Get("/my", middleware.AuthRequired, handlers.GetUserApplications)
 	applications.Get("/:id", handlers.GetApplicationByID)
-	applications.Post("/", middleware.AuthRequired, handlers.CreateGameApplication)
+	applications.Post("/", middleware.AuthRequired, middleware.CreateApplicationRateLimiter(), handlers.CreateGameApplication)
 	applications.Patch("/:id", middleware.AuthRequired, handlers.UpdateApplication)
 	applications.Delete("/:id", middleware.AuthRequired, handlers.DeleteApplication)
 

@@ -1,6 +1,9 @@
 package handlers
 
 import (
+	"log"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/duker221/teamly/internal/database"
@@ -10,10 +13,26 @@ import (
 	"github.com/google/uuid"
 )
 
+// setAuthCookie устанавливает HTTP-only cookie с токеном авторизации
+func setAuthCookie(c *fiber.Ctx, token string) {
+	isProduction := os.Getenv("GO_ENV") == "production"
+
+	c.Cookie(&fiber.Cookie{
+		Name:     "auth_token",
+		Value:    token,
+		Path:     "/",
+		MaxAge:   60 * 60 * 24, // 24 часа
+		HTTPOnly: true,
+		Secure:   isProduction, // true только в production с HTTPS
+		SameSite: "Lax",
+	})
+}
+
 func RegisterUser(c *fiber.Ctx) error {
 	var req models.AuthRequest
 
 	if err := c.BodyParser(&req); err != nil {
+		log.Printf("[Register] Body parse error: %v", err)
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error": "Invalid request body",
 		})
@@ -25,9 +44,9 @@ func RegisterUser(c *fiber.Ctx) error {
 		})
 	}
 
-	// Хэшируем пароль
 	hashedPassword, err := utils.HashPassword(req.Password)
 	if err != nil {
+		log.Printf("[Register] Hash password error: %v", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to hash password",
 		})
@@ -42,23 +61,41 @@ func RegisterUser(c *fiber.Ctx) error {
 
 	res := database.DB.Create(&user)
 	if res.Error != nil {
+		log.Printf("[Register] DB create error: %v", res.Error)
+		// Check for duplicate email/nickname
+		if strings.Contains(res.Error.Error(), "idx_users_email") {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"error": "Email already registered",
+			})
+		}
+		if strings.Contains(res.Error.Error(), "idx_users_nickname") {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"error": "Nickname already taken",
+			})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to create user",
 		})
 	}
 
-	// Генерируем токен
+	log.Printf("[Register] User created: %s", user.ID)
+
 	token, err := utils.GenerateToken(user.ID)
 	if err != nil {
+		log.Printf("[Register] Token generation error: %v", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to generate token",
 		})
 	}
 
+	log.Printf("[Register] Success for user: %s", user.Email)
+
+	// Устанавливаем HTTP-only cookie
+	setAuthCookie(c, token)
+
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 		"message": "User created successfully",
 		"user":    user,
-		"token":   token,
 	})
 }
 
@@ -99,10 +136,12 @@ func LoginUser(c *fiber.Ctx) error {
 		})
 	}
 
+	// Устанавливаем HTTP-only cookie
+	setAuthCookie(c, token)
+
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"message": "Login successful",
 		"user":    user,
-		"token":   token,
 	})
 }
 
@@ -187,14 +226,15 @@ func GetAllUsers(c *fiber.Ctx) error {
 }
 
 func LogoutUser(c *fiber.Ctx) error {
+	isProduction := os.Getenv("GO_ENV") == "production"
+
 	c.Cookie(&fiber.Cookie{
 		Name:     "auth_token",
 		Value:    "",
 		Path:     "/",
-		Domain:   "localhost",
 		MaxAge:   -1,
 		HTTPOnly: true,
-		Secure:   false,
+		Secure:   isProduction,
 		SameSite: "Lax",
 	})
 
@@ -212,13 +252,12 @@ func UpdateProfile(c *fiber.Ctx) error {
 		})
 	}
 
-	// Структура для обновления профиля
 	type UpdateProfileRequest struct {
 		Discord     *string  `json:"discord"`
 		Telegram    *string  `json:"telegram"`
 		CountryCode *string  `json:"country_code"`
 		Description *string  `json:"description"`
-		BirthDate   *string  `json:"birth_date"` // Принимаем как строку YYYY-MM-DD
+		BirthDate   *string  `json:"birth_date"`
 		Gender      *string  `json:"gender"`
 		Languages   []string `json:"languages"`
 	}
@@ -230,7 +269,6 @@ func UpdateProfile(c *fiber.Ctx) error {
 		})
 	}
 
-	// Находим пользователя
 	var user models.User
 	if err := database.DB.Where("id = ?", userID).First(&user).Error; err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
@@ -238,7 +276,6 @@ func UpdateProfile(c *fiber.Ctx) error {
 		})
 	}
 
-	// Обновляем поля напрямую в структуре
 	if req.Discord != nil {
 		user.Discord = req.Discord
 	}
@@ -252,7 +289,6 @@ func UpdateProfile(c *fiber.Ctx) error {
 		user.Description = req.Description
 	}
 	if req.BirthDate != nil && *req.BirthDate != "" {
-		// Парсим дату из формата YYYY-MM-DD
 		parsed, err := time.Parse("2006-01-02", *req.BirthDate)
 		if err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -281,5 +317,28 @@ func UpdateProfile(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"message": "Profile updated successfully",
 		"user":    user,
+	})
+}
+
+// GetWebSocketToken возвращает токен для WebSocket подключения
+// Используется потому что HTTP-only cookie не отправляется на другой порт
+func GetWebSocketToken(c *fiber.Ctx) error {
+	userID, err := utils.GetUserIDFromContext(c)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "Unauthorized",
+		})
+	}
+
+	// Генерируем токен (тот же что и для обычной авторизации)
+	token, err := utils.GenerateToken(userID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to generate token",
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"token": token,
 	})
 }

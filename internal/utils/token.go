@@ -21,7 +21,7 @@ var Config JWTConfig
 func LoadTokenConfig() {
 	Config = JWTConfig{
 		TokenExpiration: 24 * time.Hour,
-		TokenSecret:     []byte(os.Getenv("JWT_SECRET_KEY")),
+		TokenSecret:     []byte(os.Getenv("JWT_SECRET")),
 	}
 }
 
@@ -77,19 +77,25 @@ func GetUserIDFromToken(tokenString string) (uuid.UUID, error) {
 }
 
 func GetUserIDFromContext(c *fiber.Ctx) (uuid.UUID, error) {
-	authHeader := c.Get("Authorization")
-	if authHeader == "" {
-		return uuid.Nil, fmt.Errorf("authorization header is missing")
-	}
+	// Сначала проверяем HTTP-only cookie
+	tokenString := c.Cookies("auth_token")
 
-	const bearerPrefix = "Bearer "
-	if !strings.HasPrefix(authHeader, bearerPrefix) {
-		return uuid.Nil, fmt.Errorf("invalid authorization header format")
-	}
-
-	tokenString := strings.TrimSpace(authHeader[len(bearerPrefix):])
+	// Если cookie нет, проверяем Authorization header (для обратной совместимости)
 	if tokenString == "" {
-		return uuid.Nil, fmt.Errorf("bearer token is empty")
+		authHeader := c.Get("Authorization")
+		if authHeader == "" {
+			return uuid.Nil, fmt.Errorf("authentication required")
+		}
+
+		const bearerPrefix = "Bearer "
+		if !strings.HasPrefix(authHeader, bearerPrefix) {
+			return uuid.Nil, fmt.Errorf("invalid authorization header format")
+		}
+
+		tokenString = strings.TrimSpace(authHeader[len(bearerPrefix):])
+		if tokenString == "" {
+			return uuid.Nil, fmt.Errorf("bearer token is empty")
+		}
 	}
 
 	return GetUserIDFromToken(tokenString)

@@ -65,6 +65,7 @@ func AutoMigrate() error {
 		&models.ApplicationResponse{},
 		&models.Conversation{},
 		&models.Message{},
+		&models.PasswordResetToken{},
 		// &models.Listing{},
 		// &models.ListingGame{},
 		// &models.Review{},
