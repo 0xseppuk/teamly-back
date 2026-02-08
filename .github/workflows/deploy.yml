@@ -1,0 +1,42 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build & Deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Deploy to server via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          command_timeout: 10m
+          script: |
+            set -e
+
+            echo "==> Pulling latest backend code..."
+            cd ~/teamly-back
+            git pull origin main
+
+            echo "==> Rebuilding and restarting backend container..."
+            cd ~/teamly-deploy
+            sudo /usr/local/bin/docker-compose build server
+            sudo /usr/local/bin/docker-compose up -d server
+
+            echo "==> Cleaning up old images..."
+            sudo docker image prune -f
+
+            echo "==> Deploy complete!"
+            sudo docker ps --filter name=teamly-server --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"

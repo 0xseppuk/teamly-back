@@ -203,27 +203,18 @@ func GetUserByID(c *fiber.Ctx) error {
 		Order("created_at DESC").
 		Find(&applications)
 
+	// Скрываем email при просмотре чужого профиля
+	currentUserID, _ := utils.GetUserIDFromContext(c)
+	if currentUserID != parsedID {
+		user.Email = ""
+	}
+
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"user":         user,
 		"applications": applications,
 	})
 }
 
-func GetAllUsers(c *fiber.Ctx) error {
-	var users []models.User
-	result := database.DB.Preload("Country").Find(&users)
-
-	if result.Error != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to fetch users",
-		})
-	}
-
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"users": users,
-		"count": len(users),
-	})
-}
 
 func LogoutUser(c *fiber.Ctx) error {
 	isProduction := os.Getenv("GO_ENV") == "production"
@@ -249,6 +240,14 @@ func UpdateProfile(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"error": "Unauthorized",
+		})
+	}
+
+	// Проверяем что пользователь редактирует свой профиль
+	paramID := c.Params("id")
+	if paramID != "" && paramID != userID.String() {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"error": "You can only update your own profile",
 		})
 	}
 

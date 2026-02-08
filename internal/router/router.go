@@ -26,8 +26,7 @@ func SetupRoutes(app *fiber.App) {
 	auth.Post("/reset-password", middleware.AuthRateLimiter(), handlers.ResetPassword)
 
 	//users
-	users := api.Group("/users")
-	users.Get("/", handlers.GetAllUsers)
+	users := api.Group("/users", middleware.AuthRequired)
 	users.Get("/:id", handlers.GetUserByID)
 	users.Get("/:id/applications", handlers.GetApplicationsByUserID)
 	users.Patch("/:id", handlers.UpdateProfile)
