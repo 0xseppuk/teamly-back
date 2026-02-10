@@ -8,19 +8,44 @@ import (
 )
 
 func GetAllGames(c *fiber.Ctx) error {
-	var games []models.Game
 	search := c.Query("search")
+	page := c.QueryInt("page", 1)
+	limit := c.QueryInt("limit", 8)
 
-	query := database.DB
-
-	// Add search filter if provided
-	if search != "" {
-		query = query.Where("LOWER(name) LIKE LOWER(?)", "%"+search+"%")
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 50 {
+		limit = 8
 	}
 
-	result := query.Find(&games)
+	offset := (page - 1) * limit
 
-	if result.Error != nil {
+	var total int64
+	countQuery := database.DB.Model(&models.Game{})
+
+	if search != "" {
+		countQuery = countQuery.Where("LOWER(name) LIKE LOWER(?)", "%"+search+"%")
+	}
+
+	if err := countQuery.Count(&total).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to count games",
+		})
+	}
+
+	var games []models.Game
+	dataQuery := database.DB.Model(&models.Game{})
+
+	if search != "" {
+		dataQuery = dataQuery.Where("LOWER(name) LIKE LOWER(?)", "%"+search+"%")
+	}
+
+	if err := dataQuery.
+		Order("id ASC").
+		Offset(offset).
+		Limit(limit).
+		Find(&games).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to fetch games",
 		})
@@ -29,6 +54,7 @@ func GetAllGames(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"games": games,
 		"count": len(games),
+		"total": total,
 	})
 }
 
