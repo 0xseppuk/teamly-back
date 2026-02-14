@@ -58,6 +58,26 @@ func GetAllGames(c *fiber.Ctx) error {
 	})
 }
 
+func GetGameBySlug(c *fiber.Ctx) error {
+	slug := c.Params("slug")
+	if slug == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Game slug is required",
+		})
+	}
+
+	game := models.Game{}
+	result := database.DB.Where("slug = ?", slug).First(&game)
+
+	if result.Error != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "Game not found",
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(game)
+}
+
 func GetGameById(c *fiber.Ctx) error {
 	gameID := c.Params("id")
 	if gameID == "" {

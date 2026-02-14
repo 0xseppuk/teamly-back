@@ -39,6 +39,7 @@ func SetupRoutes(app *fiber.App) {
 	//games
 	games := api.Group("/games")
 	games.Get("/", handlers.GetAllGames)
+	games.Get("/slug/:slug", handlers.GetGameBySlug)
 	games.Get("/:id", handlers.GetGameById)
 
 	//game applications
